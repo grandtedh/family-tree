@@ -1,49 +1,26 @@
 import { useEffect, useState } from "react"
-import reactLogo from "./assets/react.svg"
-import viteLogo from "./assets/vite.svg"
-import heroImg from "./assets/hero.png"
 import "./App.css"
-import { familyTree, getAncestorTree, getRelationships } from "./family-tree"
-import createModule from "../wasm/dist/jacquard.js"
+import jacquard from "./jacquard"
 
 function App() {
   const [count, setCount] = useState(0)
 
   useEffect(() => {
-    async function invokeModule() {
-      const module = await createModule()
-      const treeInput = [0, 10, 15, 20, 25, 30, 35, 40, 45, 50]
-      const ptr = module._malloc(10 * 2)
-      module.HEAPU16.set(treeInput, ptr / 2)
+    console.log('Hello, world!')
 
-      const jacquard = module.cwrap('jacquard', 'number' , ['number', 'number'])
-      const outPtr = jacquard(ptr, 5)
-      module._free(ptr)
-      const outArray = module.HEAPF64.slice(outPtr / 8, outPtr / 8 + 9)
-      module._free(outPtr)
-      return outArray
-    }
-
-    invokeModule().then(value => console.log(value)
-    )
-    const ancestorTree = getAncestorTree(familyTree)
-
-    const relationships = getRelationships(ancestorTree, "Max", "Ashley")
-    console.log(relationships)
-    console.log(relationships[0]!.left!.child === relationships[1]!.left!.child)
-    console.log(
-      relationships[0]!.right!.child === relationships[1]!.right!.child,
-    )
-  })
+    jacquard([[0, 0,], [0, 0]]).then(coefs => {
+      console.log(coefs)
+    })
+  }, [])
 
   return (
     <>
       <section id="center">
-        <div className="hero">
+        {/* <div className="hero">
           <img src={heroImg} className="base" width="170" height="179" alt="" />
           <img src={reactLogo} className="framework" alt="React logo" />
           <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
+        </div> */}
         <div>
           <h1>Get started</h1>
           <p>
@@ -68,7 +45,7 @@ function App() {
           <h2>Documentation</h2>
           <p>Your questions, answered</p>
           <ul>
-            <li>
+            {/* <li>
               <a href="https://vite.dev/" target="_blank">
                 <img className="logo" src={viteLogo} alt="" />
                 Explore Vite
@@ -79,7 +56,7 @@ function App() {
                 <img className="button-icon" src={reactLogo} alt="" />
                 Learn more
               </a>
-            </li>
+            </li> */}
           </ul>
         </div>
         <div id="social">
