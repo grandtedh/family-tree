@@ -1,15 +1,47 @@
 import { useEffect, useState } from "react"
 import "./App.css"
-import jacquard from "./jacquard"
+import jacquard, { interpretJacquard } from "./jacquard"
 
 function App() {
   const [count, setCount] = useState(0)
 
   useEffect(() => {
-    console.log('Hello, world!')
+    console.log("Hello, world!")
 
-    jacquard(3, 4, [[0, 0,], [0, 0], [0, 0], [1, 2], [1, 2], [3, 4], [3, 4]]).then(coefs => {
+    const start = performance.now()
+    jacquard(19, 20, [
+      [0, 0],
+      [0, 0],
+      [0, 0],
+      [0, 0],
+      [0, 0],
+      [0, 0],
+      [0, 0],
+      [1, 2],
+      [1, 2],
+      [3, 7],
+      [4, 9],
+      [3, 7],
+      [9, 5],
+      [3, 7],
+      [8, 6],
+      [10, 11],
+      [11, 12],
+      [13, 14],
+      [13, 14],
+      [15, 17],
+      [16, 18],
+      // [0, 0],
+      // [0, 0],
+      // [1, 2],
+      // [1, 2],
+      // [3, 4],
+      // [3, 4],
+    ]).then((coefs) => {
+      const end = performance.now()
       console.log(coefs)
+      console.log(interpretJacquard(coefs))
+      console.log((end - start) / 1000)
     })
   })
 
