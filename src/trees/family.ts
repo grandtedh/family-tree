@@ -179,7 +179,6 @@ export function getFamilyTree(family: Readonly<Family>) {
   return {
     warnings,
     familyTree,
-    generations,
   }
 }
 

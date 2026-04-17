@@ -14,10 +14,9 @@ const testFamily: FamilyInput = [
 ]
 
 test("Check family generations", () => {
-  const { warnings, familyTree, generations } = getFamilyTree(
-    Family.parse(testFamily),
-  )
+  const { warnings, familyTree } = getFamilyTree(Family.parse(testFamily))
   expect(warnings.length, "Valid family produced warnings").toBe(0)
+  const generations = getGenerations(familyTree)
   expect(generations.get("a")).toBe(1)
   expect(generations.get("b")).toBe(1)
   expect(generations.get("c")).toBe(2)

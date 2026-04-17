@@ -3,30 +3,13 @@ import "./App.css"
 import jacquard, { interpretJacquard } from "./wasm-interop/jacquard"
 import { familyData } from "../families/familydata"
 import relationships from "./wasm-interop/relationships"
+import {
+  Family,
+  getFamilyTree,
+  type FamilyTree,
+} from "@family-tree/trees/family"
 
-const ids: Record<string, number> = {}
-// const names = [""]
-for (let i = 0; i < familyData.length; i++) {
-  ids[familyData[i]!.name.trim()] = i + 1
-  // names.push(familyData[i]!.name.trim())
-}
-const tree: [number, number][] = [[0, 0]]
-for (const person of familyData) {
-  tree.push([
-    ids[person.mother.trim()] ?? 0,
-    ids[person.father.split("&")[0]!.trim()] ?? 0,
-  ])
-}
-for (let i = 0; i < tree.length; i++) {
-  const descent = tree[i]!
-  if (descent[0] && !descent[1]) {
-    descent[1] = tree.length
-    tree.push([0, 0])
-  } else if (descent[1] && !descent[0]) {
-    descent[0] = tree.length
-    tree.push([0, 0])
-  }
-}
+const families = import.meta.glob("@families/*.json")
 
 function App() {
   const [getCoefsFunction, setGetCoefsFunction] = useState<Awaited<
@@ -35,31 +18,67 @@ function App() {
   const [getRelationshipsFunction, setGetRelationshipsFunction] =
     useState<Awaited<ReturnType<typeof relationships>> | null>(null)
 
+  const [family, setFamily] = useState("")
+  const [familyTree, setFamilyTree] = useState<FamilyTree | null>(null)
   const [a, setA] = useState("")
   const [b, setB] = useState("")
 
-  const relationship =
-    getCoefsFunction !== null && ids[a] && ids[b]
-      ? interpretJacquard(getCoefsFunction(ids[a], ids[b]))
-      : null
+  const relationship = useMemo(() => {
+    if (!getCoefsFunction) {
+      return null
+    }
+    const coefs = getCoefsFunction(a, b)
+    if (!coefs) {
+      return null
+    }
+    return interpretJacquard(coefs)
+  }, [getCoefsFunction, a, b])
 
-  const relationshipArray =
-    getRelationshipsFunction !== null && ids[a] && ids[b]
-      ? getRelationshipsFunction(ids[a], ids[b])
-      : null
+  const relationshipArray = useMemo(() => {
+    if (!getRelationshipsFunction) {
+      return null
+    }
+    const relationships = getRelationshipsFunction(a, b)
+    if (!relationships) {
+      return null
+    }
+    return relationships
+  }, [getRelationshipsFunction, a, b])
 
   useEffect(() => {
-    jacquard(tree).then((getCoefsFunction) => {
-      setGetCoefsFunction(() => getCoefsFunction)
-    })
-    relationships(tree).then((getRelationshipsFunction) => {
-      setGetRelationshipsFunction(() => getRelationshipsFunction)
-    })
-  }, [])
+    async function updateFamilyTree() {
+      const fileName = `/families/${family}.json`
+      const familyInput =
+        families[fileName] !== undefined
+          ? await families[fileName]()
+          : undefined
+      const result = Family.safeParse(
+        typeof familyInput === "object" &&
+          familyInput !== null &&
+          "default" in familyInput
+          ? familyInput.default
+          : undefined,
+      )
+      if (!result.success) {
+        console.error(result.error)
+        setGetCoefsFunction(null)
+        setGetRelationshipsFunction(null)
+        return
+      }
+      const { warnings, familyTree } = getFamilyTree(result.data)
+      for (const warning of warnings) {
+        console.error(`Warning parsing file ${fileName}: ${warning.message}`)
+      }
+      jacquard(familyTree).then((getCoefsFunction) => {
+        setGetCoefsFunction(() => getCoefsFunction)
+      })
+      relationships(familyTree).then((getRelationshipsFunction) => {
+        setGetRelationshipsFunction(() => getRelationshipsFunction)
+      })
+    }
 
-  if (relationshipArray) {
-    console.log(relationshipArray)
-  }
+    updateFamilyTree()
+  }, [family])
 
   return (
     <>
@@ -72,6 +91,11 @@ function App() {
         <div>
           <h1>Get started</h1>
           <input
+            value={family}
+            onChange={(e) => setFamily(e.target.value)}
+            placeholder="Family"
+          />
+          <input
             value={a}
             onChange={(e) => setA(e.target.value)}
             placeholder="A input"
@@ -83,6 +107,7 @@ function App() {
           />
         </div>
         <p className="counter">{JSON.stringify(relationship)}</p>
+        <p className="counter">{JSON.stringify(relationshipArray)}</p>
       </section>
 
       <div className="ticks"></div>

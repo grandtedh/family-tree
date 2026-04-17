@@ -9,6 +9,7 @@ export default defineConfig({
   resolve: {
     alias: {
       "@family-tree": path.resolve(import.meta.dirname, "./src"),
+      "@families": path.resolve(import.meta.dirname, "./families"),
     },
   },
   server: {

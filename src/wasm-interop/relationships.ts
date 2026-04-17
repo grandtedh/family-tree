@@ -1,3 +1,4 @@
+import { getGenerations, type FamilyTree } from "@family-tree/trees/family.js"
 import createModule from "../wasm/dist/relationships.js"
 
 const SIZEOF_CHAR = 1
@@ -15,12 +16,13 @@ export interface Relationship {
 }
 
 export default async function relationships(
-  familyTree: [number, number][],
-): Promise<(a: number, b: number) => void> {
+  familyTree: FamilyTree,
+): Promise<(a: string, b: string) => Relationship[] | null> {
+  const { idMap, numericalFamilyTree } = familyTreeToArray(familyTree)
   const module = await createModule()
-  const ptr = module._malloc(familyTree.length * 2 * SIZEOF_SHORT)
-  module.HEAPU16.set(familyTree.flat(1), ptr / SIZEOF_SHORT)
-  module._init(ptr, familyTree.length)
+  const ptr = module._malloc(numericalFamilyTree.length * 2 * SIZEOF_SHORT)
+  module.HEAPU16.set(numericalFamilyTree.flat(1), ptr / SIZEOF_SHORT)
+  module._init(ptr, numericalFamilyTree.length)
   module._free(ptr)
 
   const relationshipSize = module._get_relationship_size()
@@ -30,9 +32,17 @@ export default async function relationships(
   const parentageOffset = module._get_parentage_offset()
   const multiplicityOffset = module._get_multiplicity_offset()
 
-  function getRelationships(a: number, b: number): Relationship[] {
+  function getRelationships(a: string, b: string): Relationship[] | null {
+    const aId = idMap.get(a)
+    const bId = idMap.get(b)
+    if (aId === undefined) {
+      return null
+    }
+    if (bId === undefined) {
+      return null
+    }
     const inPtr = module._malloc(SIZEOF_POINTER)
-    const arrLength = module._relationships(a, b, inPtr)
+    const arrLength = module._relationships(aId, bId, inPtr)
     const arrPtr = module.HEAP32[inPtr / SIZEOF_POINTER]!
     const relationships: Relationship[] = []
     for (let i = 0; i < arrLength; i++) {
@@ -61,4 +71,30 @@ export default async function relationships(
   }
 
   return getRelationships
+}
+
+function familyTreeToArray(familyTree: FamilyTree) {
+  const generations = getGenerations(familyTree)
+  const topologicalSort = [...familyTree.keys()].sort(
+    (a, b) => generations.get(a)! - generations.get(b)!,
+  )
+  const idMap = new Map<string, number>()
+  const numericalFamilyTree: [number, number][] = []
+  let nextId = 1
+  for (const id of topologicalSort) {
+    const person = familyTree.get(id)!
+    // Unlike Jacquard, don't treat twins as the same person
+    const numericalId = nextId++
+    idMap.set(id, numericalId)
+    numericalFamilyTree.push([
+      person.father === undefined ? 0 : (idMap.get(person.father) ?? 0),
+      person.mother === undefined ? 0 : (idMap.get(person.mother) ?? 0),
+    ])
+  }
+  // No need to invent founders to fill in parent gaps
+
+  return {
+    idMap,
+    numericalFamilyTree,
+  }
 }
