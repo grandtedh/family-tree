@@ -89,7 +89,7 @@ function familyTreeToArray(familyTree: FamilyTree) {
     (a, b) => generations.get(a)! - generations.get(b)!,
   )
   const idMap = new Map<string, number>()
-  const numericalFamilyTree: [number, number][] = []
+  const numericalFamilyTree: [number, number][] = [[0, 0]]
   let nextId = 1
   for (const id of topologicalSort) {
     const person = familyTree.get(id)!
@@ -98,14 +98,15 @@ function familyTreeToArray(familyTree: FamilyTree) {
     const identicalId = person.identicals.find((identicalId) =>
       idMap.has(identicalId),
     )
-    const numericalId =
-      identicalId === undefined ? nextId++ : idMap.get(identicalId)!
-    idMap.set(id, numericalId)
-    if (identicalId === undefined) {
-      numericalFamilyTree.push([
+    if (identicalId !== undefined) {
+      idMap.set(id, idMap.get(identicalId)!)
+    } else {
+      const numericalId = nextId++
+      idMap.set(id, numericalId)
+      numericalFamilyTree[numericalId] = [
         person.father === undefined ? 0 : (idMap.get(person.father) ?? 0),
         person.mother === undefined ? 0 : (idMap.get(person.mother) ?? 0),
-      ])
+      ]
     }
   }
   // For simplicity, the algorithm assumes all people have both parents or neither

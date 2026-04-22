@@ -183,7 +183,7 @@ export function getFamilyTree(family: Readonly<Family>) {
 }
 
 export function getGenerations(familyTree: FamilyTree) {
-  const adjacencyList = new Map<string, Set<string>>()
+  const adjacencyList = new Map<string, string[]>()
   const numParents = new Map<string, number>()
   const founders: string[] = []
   const generations = new Map<string, number>()
@@ -191,16 +191,16 @@ export function getGenerations(familyTree: FamilyTree) {
     numParents.set(id, 0)
     if (person.father !== undefined) {
       if (!adjacencyList.has(person.father)) {
-        adjacencyList.set(person.father, new Set())
+        adjacencyList.set(person.father, [])
       }
-      adjacencyList.get(person.father)!.add(id)
+      adjacencyList.get(person.father)!.push(id)
       numParents.set(id, numParents.get(id)! + 1)
     }
     if (person.mother !== undefined) {
       if (!adjacencyList.has(person.mother)) {
-        adjacencyList.set(person.mother, new Set())
+        adjacencyList.set(person.mother, [])
       }
-      adjacencyList.get(person.mother)!.add(id)
+      adjacencyList.get(person.mother)!.push(id)
       numParents.set(id, numParents.get(id)! + 1)
     }
     if (person.father === undefined && person.mother === undefined) {

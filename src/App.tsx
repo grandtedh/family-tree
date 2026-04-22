@@ -1,15 +1,18 @@
 import { useEffect, useMemo, useState } from "react"
-import "./App.css"
-import jacquard, { interpretJacquard } from "./wasm-interop/jacquard"
-import { familyData } from "../families/familydata"
-import relationships from "./wasm-interop/relationships"
+import "@family-tree/App.css"
+import jacquard, { interpretJacquard } from "@family-tree/wasm-interop/jacquard"
+import relationships, {
+  relationshipToString,
+} from "@family-tree/wasm-interop/relationships"
 import {
   Family,
-  getFamilyTree,
   type FamilyTree,
+  getFamilyTree,
 } from "@family-tree/trees/family"
 
-const families = import.meta.glob("@families/*.json")
+const families = import.meta.glob<{ default: {} }>("@families/*.json", {
+  eager: true,
+})
 
 function App() {
   const [getCoefsFunction, setGetCoefsFunction] = useState<Awaited<
@@ -20,65 +23,68 @@ function App() {
 
   const [family, setFamily] = useState("")
   const [familyTree, setFamilyTree] = useState<FamilyTree | null>(null)
-  const [a, setA] = useState("")
-  const [b, setB] = useState("")
+  const [aId, setA] = useState("")
+  const a = familyTree?.get(aId) ?? null
+  const [bId, setB] = useState("")
+  const b = familyTree?.get(bId) ?? null
 
   const relationship = useMemo(() => {
     if (!getCoefsFunction) {
       return null
     }
-    const coefs = getCoefsFunction(a, b)
+    const coefs = getCoefsFunction(aId, bId)
     if (!coefs) {
       return null
     }
     return interpretJacquard(coefs)
-  }, [getCoefsFunction, a, b])
+  }, [getCoefsFunction, aId, bId])
 
   const relationshipArray = useMemo(() => {
     if (!getRelationshipsFunction) {
       return null
     }
-    const relationships = getRelationshipsFunction(a, b)
+    const relationships = getRelationshipsFunction(aId, bId)
     if (!relationships) {
       return null
     }
     return relationships
-  }, [getRelationshipsFunction, a, b])
+      .sort((a, b) => Math.abs(a.removal) - Math.abs(b.removal))
+      .sort((a, b) => Math.abs(a.cousinship) - Math.abs(b.cousinship))
+  }, [getRelationshipsFunction, aId, bId])
 
   useEffect(() => {
-    async function updateFamilyTree() {
-      const fileName = `/families/${family}.json`
-      const familyInput =
-        families[fileName] !== undefined
-          ? await families[fileName]()
-          : undefined
-      const result = Family.safeParse(
-        typeof familyInput === "object" &&
-          familyInput !== null &&
-          "default" in familyInput
-          ? familyInput.default
-          : undefined,
-      )
-      if (!result.success) {
-        console.error(result.error)
-        setGetCoefsFunction(null)
-        setGetRelationshipsFunction(null)
-        return
-      }
-      const { warnings, familyTree } = getFamilyTree(result.data)
-      for (const warning of warnings) {
-        console.error(`Warning parsing file ${fileName}: ${warning.message}`)
-      }
-      jacquard(familyTree).then((getCoefsFunction) => {
-        setGetCoefsFunction(() => getCoefsFunction)
-      })
-      relationships(familyTree).then((getRelationshipsFunction) => {
-        setGetRelationshipsFunction(() => getRelationshipsFunction)
-      })
+    const fileName = `/families/${family}.json`
+    if (!(fileName in families)) {
+      return
     }
-
-    updateFamilyTree()
+    const result = Family.safeParse(families[fileName]?.default)
+    if (!result.success) {
+      console.error(result.error)
+      setGetCoefsFunction(null)
+      setGetRelationshipsFunction(null)
+      return
+    }
+    const { warnings, familyTree } = getFamilyTree(result.data)
+    if (warnings.length > 0) {
+      console.error(`${warnings.length} warning(s) while parsing ${fileName}`)
+    }
+    for (const warning of warnings) {
+      console.error(`Warning parsing file ${fileName}: ${warning.message}`)
+    }
+    setFamilyTree(familyTree)
   }, [family])
+
+  useEffect(() => {
+    if (familyTree === null) {
+      return
+    }
+    jacquard(familyTree).then((getCoefsFunction) => {
+      setGetCoefsFunction(() => getCoefsFunction)
+    })
+    relationships(familyTree).then((getRelationshipsFunction) => {
+      setGetRelationshipsFunction(() => getRelationshipsFunction)
+    })
+  }, [familyTree])
 
   return (
     <>
@@ -96,18 +102,25 @@ function App() {
             placeholder="Family"
           />
           <input
-            value={a}
+            value={aId}
             onChange={(e) => setA(e.target.value)}
             placeholder="A input"
           />
           <input
-            value={b}
+            value={bId}
             onChange={(e) => setB(e.target.value)}
             placeholder="B input"
           />
         </div>
         <p className="counter">{JSON.stringify(relationship)}</p>
         <p className="counter">{JSON.stringify(relationshipArray)}</p>
+        <p className="counter">
+          {a === null
+            ? ""
+            : relationshipArray
+                ?.map((relationship) => relationshipToString(relationship, a))
+                .join(", ")}
+        </p>
       </section>
 
       <div className="ticks"></div>
