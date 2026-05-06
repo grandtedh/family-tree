@@ -5,7 +5,7 @@
 
 // Implementation is based on "Relatedness coefficients in pedigrees with inbred founders" by Magnus Dehli Vigeland
 
-typedef unsigned short Person;
+typedef signed short Person;
 
 // This is the solution to a linear system of equations relating generalized kinship coefficients and Jacquard coefficients
 // Values are copied from ribd implementation
@@ -33,7 +33,6 @@ std::unordered_map<long long, double> phi4Cache;
 
 Person (*tree)[2];
 std::unordered_map<Person, std::set<Person>> ancestors;
-
 
 void getAncestors(Person length) {
   for (Person i = 1; i < length; i++) {

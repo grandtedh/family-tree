@@ -1,9 +1,5 @@
-import {
-  getGenerations,
-  Person,
-  type FamilyTree,
-} from "@family-tree/trees/family.js"
-import createModule from "../wasm/dist/relationships.js"
+import { getGenerations, type FamilyTree } from "@family-tree/trees/family.js"
+import createModule from "@wasm/relationships.js"
 
 const SIZEOF_CHAR = 1
 const SIZEOF_SHORT = 2
@@ -11,29 +7,23 @@ const SIZEOF_LONG = 4
 const SIZEOF_LONG_LONG = 8
 const SIZEOF_POINTER = 4
 
-// Completeness enums
-const HALF = 0
-const FULL = 1
-
-// Parentage enums
-const ALLOGAMOUS = 0
-const ALLOGAMOUS_CROSS = 1
-const AUTOGAMOUS = 2
-const PARENTAGE_FATHER = 3
-const PARENTAGE_MOTHER = 4
-
 export interface Relationship {
   removal: number
-  cousinship: number
-  completeness: number
-  parentage: number
-  multiplicity: number
+  cousinhood: number
+  parentages: Parentage[]
+}
+
+export interface Parentage {
+  leftFather?: string | undefined
+  leftMother?: string | undefined
+  rightFather?: string | undefined
+  rightMother?: string | undefined
 }
 
 export default async function relationships(
   familyTree: FamilyTree,
 ): Promise<(a: string, b: string) => Relationship[] | null> {
-  const { idMap, numericalFamilyTree } = familyTreeToArray(familyTree)
+  const { idMap, idArray, numericalFamilyTree } = familyTreeToArray(familyTree)
   const module = await createModule()
   const ptr = module._malloc(numericalFamilyTree.length * 2 * SIZEOF_SHORT)
   module.HEAPU16.set(numericalFamilyTree.flat(1), ptr / SIZEOF_SHORT)
@@ -42,10 +32,15 @@ export default async function relationships(
 
   const relationshipSize = module._get_relationship_size()
   const removalOffset = module._get_removal_offset()
-  const cousinshipOffset = module._get_cousinship_offset()
-  const completenessOffset = module._get_completeness_offset()
-  const parentageOffset = module._get_parentage_offset()
-  const multiplicityOffset = module._get_multiplicity_offset()
+  const cousinhoodOffset = module._get_cousinhood_offset()
+  const parentagesOffset = module._get_parentages_offset()
+  const parentageLengthOffset = module._get_parentage_length_offset()
+
+  const parentageSize = module._get_parentage_size()
+  const leftFatherOffset = module._get_left_father_offset()
+  const leftMotherOffset = module._get_left_mother_offset()
+  const rightFatherOffset = module._get_right_father_offset()
+  const rightMotherOffset = module._get_right_mother_offset()
 
   function getRelationships(a: string, b: string): Relationship[] | null {
     const aId = idMap.get(a)
@@ -57,30 +52,50 @@ export default async function relationships(
       return null
     }
     const inPtr = module._malloc(SIZEOF_POINTER)
-    const arrLength = module._relationships(aId, bId, inPtr)
-    const arrPtr = module.HEAP32[inPtr / SIZEOF_POINTER]!
+    const arrPtr = module._get_relationships(aId, bId, inPtr)
+    const arrLength = module.HEAP32[inPtr / SIZEOF_POINTER]!
     const relationships: Relationship[] = []
     for (let i = 0; i < arrLength; i++) {
-      const indexOffset = arrPtr + i * relationshipSize
-      const removal =
-        module.HEAP32[(indexOffset + removalOffset) / SIZEOF_LONG]!
-      const cousinship =
-        module.HEAPU16[(indexOffset + cousinshipOffset) / SIZEOF_SHORT]!
-      const completeness =
-        module.HEAPU8[(indexOffset + completenessOffset) / SIZEOF_CHAR]!
-      const parentage =
-        module.HEAPU8[(indexOffset + parentageOffset) / SIZEOF_CHAR]!
-      const multiplicity =
-        module.HEAPU64[(indexOffset + multiplicityOffset) / SIZEOF_LONG_LONG]!
+      const idxOffset = arrPtr + i * relationshipSize
+      const removal = module.HEAP16[(idxOffset + removalOffset) / SIZEOF_SHORT]!
+      const cousinhood =
+        module.HEAPU16[(idxOffset + cousinhoodOffset) / SIZEOF_SHORT]!
+      const parentageLength =
+        module.HEAPU32[(idxOffset + parentageLengthOffset) / SIZEOF_LONG]!
+      const parentagesPtr =
+        module.HEAP32[(idxOffset + parentagesOffset) / SIZEOF_POINTER]!
+      const parentages: Parentage[] = []
+      for (let j = 0; j < parentageLength; j++) {
+        const parentageIdxOffset = parentagesPtr + j * parentageSize
+        const leftFather =
+          module.HEAP16[(parentageIdxOffset + leftFatherOffset) / SIZEOF_SHORT]!
+        const leftMother =
+          module.HEAP16[(parentageIdxOffset + leftMotherOffset) / SIZEOF_SHORT]!
+        const rightFather =
+          module.HEAP16[
+            (parentageIdxOffset + rightFatherOffset) / SIZEOF_SHORT
+          ]!
+        const rightMother =
+          module.HEAP16[
+            (parentageIdxOffset + rightMotherOffset) / SIZEOF_SHORT
+          ]!
+        parentages.push({
+          leftFather: leftFather in idArray ? idArray[leftFather] : undefined,
+          leftMother: leftMother in idArray ? idArray[leftMother] : undefined,
+          rightFather:
+            rightFather in idArray ? idArray[rightFather] : undefined,
+          rightMother:
+            rightMother in idArray ? idArray[rightMother] : undefined,
+        })
+        module._free(parentagesPtr)
+      }
+
       relationships.push({
         removal,
-        cousinship,
-        completeness,
-        parentage,
-        multiplicity: Number(multiplicity),
+        cousinhood,
+        parentages,
       })
     }
-    module._free(arrPtr)
     module._free(inPtr)
     return relationships
   }
@@ -88,93 +103,93 @@ export default async function relationships(
   return getRelationships
 }
 
-export function relationshipToString(
-  relationship: Relationship,
-  person: Person,
-) {
-  let term
-  const prefix =
-    Math.abs(relationship.removal) < 2
-      ? ""
-      : "great-".repeat(Math.abs(relationship.removal) - 2) + "grand"
-  switch (relationship.cousinship) {
-    case 0:
-      // Lineal ancestry/descent
-      if (relationship.removal === 0) {
-        term = "self"
-      } else if (relationship.removal > 0) {
-        if (person.gender === "m") {
-          term = prefix + "father"
-        } else {
-          if (relationship.parentage === PARENTAGE_FATHER) {
-            term = prefix + "sire"
-          } else {
-            term = prefix + "mother"
-          }
-        }
-      } else {
-        if (person.gender === "m") {
-          term = prefix + "son"
-        } else {
-          term = prefix + "daughter"
-        }
-      }
-      break
-    case 1:
-      // Sibling/aunt/uncle/niece/nephew
-      if (relationship.removal === 0) {
-        if (person.gender === "m") {
-          term = "brother"
-        } else {
-          term = "sister"
-        }
-      } else if (relationship.removal > 0) {
-        if (person.gender === "m") {
-          term = prefix + "uncle"
-        } else {
-          term = prefix + "aunt"
-        }
-      } else {
-        if (person.gender === "m") {
-          term = prefix + "nephew"
-        } else {
-          term = prefix + "niece"
-        }
-      }
-      break
-    default:
-      // Cousin
-      if (relationship.cousinship === 2 && relationship.removal === 0) {
-        term = "cousin"
-      } else {
-        term =
-          `${ordinal(relationship.cousinship - 1)} cousin` +
-          (relationship.removal === 0
-            ? ""
-            : ` ${multiplicativeAdverb(Math.abs(relationship.removal))} removed (${relationship.removal > 0 ? "ascending" : "descending"})`)
-      }
-  }
-  const multiplicity =
-    relationship.multiplicity === 1
-      ? ""
-      : multiplicativeAdjective(relationship.multiplicity) + " "
-  const completeness =
-    relationship.completeness === HALF && relationship.cousinship >= 1
-      ? "half-"
-      : ""
-  let parentage
-  switch (relationship.parentage) {
-    case ALLOGAMOUS_CROSS:
-      parentage = "cross-"
-      break
-    case AUTOGAMOUS:
-      parentage = "selfed "
-      break
-    default:
-      parentage = ""
-  }
-  return `${multiplicity}${parentage}${completeness}${term}`
-}
+// export function relationshipToString(
+//   relationship: Relationship,
+//   person: Person,
+// ) {
+//   let term
+//   const prefix =
+//     Math.abs(relationship.removal) < 2
+//       ? ""
+//       : "great-".repeat(Math.abs(relationship.removal) - 2) + "grand"
+//   switch (relationship.cousinship) {
+//     case 0:
+//       // Lineal ancestry/descent
+//       if (relationship.removal === 0) {
+//         term = "self"
+//       } else if (relationship.removal > 0) {
+//         if (person.gender === "m") {
+//           term = prefix + "father"
+//         } else {
+//           if (relationship.parentage === PARENTAGE_FATHER) {
+//             term = prefix + "sire"
+//           } else {
+//             term = prefix + "mother"
+//           }
+//         }
+//       } else {
+//         if (person.gender === "m") {
+//           term = prefix + "son"
+//         } else {
+//           term = prefix + "daughter"
+//         }
+//       }
+//       break
+//     case 1:
+//       // Sibling/aunt/uncle/niece/nephew
+//       if (relationship.removal === 0) {
+//         if (person.gender === "m") {
+//           term = "brother"
+//         } else {
+//           term = "sister"
+//         }
+//       } else if (relationship.removal > 0) {
+//         if (person.gender === "m") {
+//           term = prefix + "uncle"
+//         } else {
+//           term = prefix + "aunt"
+//         }
+//       } else {
+//         if (person.gender === "m") {
+//           term = prefix + "nephew"
+//         } else {
+//           term = prefix + "niece"
+//         }
+//       }
+//       break
+//     default:
+//       // Cousin
+//       if (relationship.cousinship === 2 && relationship.removal === 0) {
+//         term = "cousin"
+//       } else {
+//         term =
+//           `${ordinal(relationship.cousinship - 1)} cousin` +
+//           (relationship.removal === 0
+//             ? ""
+//             : ` ${multiplicativeAdverb(Math.abs(relationship.removal))} removed (${relationship.removal > 0 ? "ascending" : "descending"})`)
+//       }
+//   }
+//   const multiplicity =
+//     relationship.multiplicity === 1
+//       ? ""
+//       : multiplicativeAdjective(relationship.multiplicity) + " "
+//   const completeness =
+//     relationship.completeness === HALF && relationship.cousinship >= 1
+//       ? "half-"
+//       : ""
+//   let parentage
+//   switch (relationship.parentage) {
+//     case ALLOGAMOUS_CROSS:
+//       parentage = "cross-"
+//       break
+//     case AUTOGAMOUS:
+//       parentage = "selfed "
+//       break
+//     default:
+//       parentage = ""
+//   }
+//   return `${multiplicity}${parentage}${completeness}${term}`
+// }
 
 function familyTreeToArray(familyTree: FamilyTree) {
   const generations = getGenerations(familyTree)
@@ -182,6 +197,7 @@ function familyTreeToArray(familyTree: FamilyTree) {
     (a, b) => generations.get(a)! - generations.get(b)!,
   )
   const idMap = new Map<string, number>()
+  const idArray: string[] = []
   const numericalFamilyTree: [number, number][] = [[0, 0]]
   let nextId = 1
   for (const id of topologicalSort) {
@@ -189,6 +205,7 @@ function familyTreeToArray(familyTree: FamilyTree) {
     // Unlike Jacquard, don't treat twins as the same person
     const numericalId = nextId++
     idMap.set(id, numericalId)
+    idArray[numericalId] = id
     numericalFamilyTree[numericalId] = [
       person.father === undefined ? 0 : (idMap.get(person.father) ?? 0),
       person.mother === undefined ? 0 : (idMap.get(person.mother) ?? 0),
@@ -198,6 +215,7 @@ function familyTreeToArray(familyTree: FamilyTree) {
 
   return {
     idMap,
+    idArray,
     numericalFamilyTree,
   }
 }

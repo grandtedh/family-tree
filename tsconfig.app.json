@@ -9,7 +9,8 @@
     "skipLibCheck": true,
     "paths": {
       "@family-tree/*": ["./src/*"],
-      "@families/*": ["./families/*"]
+      "@families/*": ["./families/*"],
+      "@wasm/*": ["./src/wasm/debug/*"]
     },
 
     /* Bundler mode */

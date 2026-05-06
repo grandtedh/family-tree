@@ -5,25 +5,63 @@
 #include <stack>
 #include <unordered_set>
 #include <list>
+#include <type_traits>
+#include <limits>
 
-typedef unsigned short Person;
+/** Numerical ID for an individual
+ *  Valid range is 1..32767. 0 represents invalid/out-of-tree
+ */ 
+using Person = int16_t;
+/** Difference in generations for a relationship path between two individuals
+ *  Valid range is -32766..32766 (cannot be more generations than individuals)
+ */
+using GenerationDelta = std::make_signed_t<Person>;
+/** Degree of cousinship (horizontal distance) between two individuals
+ *  Valid range is 0..16383 (max cousinship requires two lines of equal length)
+ */
+using CousinhoodDegree = std::make_unsigned_t<Person>;
+/** Large enough for a bit-concatenated GenerationDelta and CousinhoodDegree
+ *  Used as a key for std::unordered_maps with relationship properties as keys
+ */
+using RelationshipKey = uint32_t;
+static_assert(
+  std::numeric_limits<std::make_unsigned_t<GenerationDelta>>::digits
+  + std::numeric_limits<std::make_unsigned_t<CousinhoodDegree>>::digits
+  <= std::numeric_limits<RelationshipKey>::digits);
 
-enum PARENT : unsigned char {
+enum PARENT : uint8_t {
   FATHER = 0,
   MOTHER = 1,
 };
 
-enum Completeness : unsigned char {
-  HALF = 0,
-  FULL = 1,
+struct Parentage {
+  Person leftFather;
+  Person leftMother;
+  Person rightFather;
+  Person rightMother;
 };
 
-enum Parentage : unsigned char {
-  ALLOGAMOUS = 0,
-  ALLOGAMOUS_CROSS = 1,
-  AUTOGAMOUS = 2,
-  PARENTAGE_FATHER = 3,
-  PARENTAGE_MOTHER = 4,
+struct Relationship {
+  // Degree of removal
+  // Positive sign means `left` is from an earlier generation than `right`
+  GenerationDelta removal;
+  // Degree of cousinhood
+  // 0 is lineal ancestry/descent
+  CousinhoodDegree cousinhood;
+  // All the sets of common ancestry linking `left` and `right`
+  Parentage *parentages;
+  size_t parentage_length;
+};
+
+struct CppRelationship {
+  // Degree of removal
+  // Positive sign means `left` is from an earlier generation than `right`
+  GenerationDelta removal;
+  // Degree of cousinhood
+  // 0 is lineal ancestry/descent
+  CousinhoodDegree cousinhood;
+  // All the sets of common ancestry linking `left` and `right`
+  std::vector<Parentage> parentage;
 };
 
 struct Ancestry {
@@ -36,16 +74,6 @@ struct RelationshipPath {
   Person ancestor;
   Ancestry *left;
   Ancestry *right;
-};
-
-struct Relationship {
-  // Magnitude of removal can't be greater than number of people
-  long removal;
-  // Cousinship can't be greater than number of people
-  unsigned short cousinship;
-  Completeness completeness;
-  Parentage parentage;
-  unsigned long long multiplicity;
 };
 
 Person (*tree)[2];
@@ -118,88 +146,69 @@ void getRelationshipPaths(Person a, Person b, std::vector<Person> &commonAncesto
   }
 }
 
-void classifyRelationships(std::list<RelationshipPath> &relationshipPaths, std::unordered_map<long long, Relationship> &relationships) {
-  int i = 0;
+void classifyRelationships(std::list<RelationshipPath> &relationshipPaths, std::unordered_map<long, CppRelationship> &relationships) {
   while (!relationshipPaths.empty()) {
-    RelationshipPath relationshipPath = relationshipPaths.back();
+    std::vector<RelationshipPath> groupedRelationships;
+    groupedRelationships.push_back(relationshipPaths.back());
     relationshipPaths.pop_back();
-    bool hasAutogamousPair = false;
-    bool hasPartnerPair = false;
     for (auto iter = relationshipPaths.begin(); iter != relationshipPaths.end();) {
-      bool erase = false;
-      if (relationshipPath.left->child == iter->left->child && relationshipPath.right->child == iter->right->child) {
-        if (relationshipPath.left->child != nullptr && relationshipPath.right->child != nullptr) {
-          // Non-lineal ancestry, determine sibling type at the root
-          if (relationshipPath.left->type == iter->left->type || relationshipPath.right->type == iter->right->type) {
-            hasAutogamousPair = true;
-            erase = true;
-          } else {
-            // Full siblings
-            hasPartnerPair = true;
-            erase = true;
-          }
-        } else if (relationshipPath.right->child == nullptr) {
-          // Left is a lineal descendant of right
-          // Can only be autogamy
-          hasAutogamousPair = true;
-          erase = true;
-        }
-        // If left is a lineal ancestor of right, don't collapse relationships based on autogamy
-        // If self-relationship, should be no other relationships
-      }
-      if (erase) {
+      if (groupedRelationships.back().left->child == iter->left->child && groupedRelationships.back().right->child == iter->right->child) {
+        groupedRelationships.push_back(*iter);
         iter = relationshipPaths.erase(iter);
       } else {
         iter++;
       }
     }
-    Relationship relationship;
-    relationship.multiplicity = 1;
-    if (hasAutogamousPair) {
-      relationship.parentage = AUTOGAMOUS;
-    } else {
-      if (relationshipPath.left->child == nullptr) {
-        relationship.parentage = relationshipPath.right->type == FATHER ? PARENTAGE_FATHER : PARENTAGE_MOTHER;
-      } else if (relationshipPath.right->child != nullptr && relationshipPath.left->type != relationshipPath.right->type) {
-        relationship.parentage = ALLOGAMOUS_CROSS;
-      } else  {
-        relationship.parentage = ALLOGAMOUS;
+    Parentage parentage = {0, 0, 0, 0};
+    for (auto iter = groupedRelationships.begin(); iter != groupedRelationships.end(); iter++) {
+      if (iter->left->child != nullptr) {
+        if (iter->left->type == FATHER) {
+          parentage.leftFather = iter->ancestor;
+        } else {
+          parentage.leftMother = iter->ancestor;
+        }
+      }
+      if (iter->right->child != nullptr) {
+        if (iter->right->type == FATHER) {
+          parentage.rightFather = iter->ancestor;
+        } else {
+          parentage.rightMother = iter->ancestor;
+        }
       }
     }
-    relationship.completeness = hasPartnerPair ? FULL : HALF;
     long leftHeight = 0;
-    for (Ancestry *leftPtr = relationshipPath.left; leftPtr != nullptr; leftPtr = leftPtr->child) {
+    for (Ancestry *leftPtr = groupedRelationships[0].left; leftPtr != nullptr; leftPtr = leftPtr->child) {
       leftHeight++;
     }
     long rightHeight = 0;
-    for (Ancestry *rightPtr = relationshipPath.right; rightPtr != nullptr; rightPtr = rightPtr->child) {
+    for (Ancestry *rightPtr = groupedRelationships[0].right; rightPtr != nullptr; rightPtr = rightPtr->child) {
       rightHeight++;
     }
-    relationship.removal = rightHeight - leftHeight;
-    relationship.cousinship = (leftHeight < rightHeight ? leftHeight : rightHeight) - 1;
-    long long relationshipKey =
-      (static_cast<long long>(relationship.removal) << 32)
-      + (static_cast<long>(relationship.cousinship) << 16)
-      + (static_cast<unsigned short>(relationship.completeness) << 8)
-      + relationship.parentage;
+    GenerationDelta removal = rightHeight - leftHeight;
+    CousinhoodDegree cousinhood = (leftHeight < rightHeight ? leftHeight : rightHeight) - 1;
+    RelationshipKey relationshipKey =
+      (static_cast<RelationshipKey>(removal) << std::numeric_limits<std::make_unsigned_t<CousinhoodDegree>>::digits)
+      + static_cast<RelationshipKey>(cousinhood);
     if (relationships.count(relationshipKey) == 1) {
-      relationships[relationshipKey].multiplicity++;
+      relationships[relationshipKey].parentage.push_back(parentage);
     } else {
-      relationships[relationshipKey] = relationship;
+      relationships[relationshipKey] = CppRelationship{removal, cousinhood, std::vector<Parentage>(1, parentage)};
     }
   }
 }
 
-size_t contiguizeRelationships(Relationship **outRelationships, std::unordered_map<long long, Relationship> &relationships) {
-  (*outRelationships) = static_cast<Relationship *>(malloc(relationships.size() * sizeof(Relationship)));
+Relationship *contiguizeRelationships(std::unordered_map<long, CppRelationship> &relationships, size_t *outLength) {
+  Relationship *outRelationships = static_cast<Relationship *>(malloc(relationships.size() * sizeof(Relationship)));
   int i = 0;
   for (auto iter = relationships.begin(); iter != relationships.end(); iter++) {
-    if (i == 0) {
-    }
-    (*outRelationships)[i] = iter->second;
+    size_t parentageLength = iter->second.parentage.size();
+    Parentage *parentages = static_cast<Parentage *>(malloc(parentageLength * sizeof(Parentage)));
+    memcpy(parentages, &iter->second.parentage[0], parentageLength * sizeof(Parentage));
+    outRelationships[i] = Relationship {iter->second.removal, iter->second.cousinhood, parentages, parentageLength};
     i++;
   }
-  return relationships.size();
+  *outLength = relationships.size();
+  return outRelationships;
 }
 
 void initialize(Person* treeInput, Person length) {
@@ -207,17 +216,17 @@ void initialize(Person* treeInput, Person length) {
   std::memcpy(tree, treeInput, length * 2 * sizeof(Person));
 }
 
-int getRelationships(Person a, Person b, Relationship **outRelationships) {
+Relationship *getRelationships(Person a, Person b, size_t *outLength) {
   getAncestries(a);
   getAncestries(b);
   std::vector<Person> commonAncestors;
   getCommonAncestors(a, b, commonAncestors);
   std::list<RelationshipPath> relationshipPaths;
   getRelationshipPaths(a, b, commonAncestors, relationshipPaths);
-  std::unordered_map<long long, Relationship> relationships;
+  std::unordered_map<long, CppRelationship> relationships;
   classifyRelationships(relationshipPaths, relationships);
-  size_t numRelationships = contiguizeRelationships(outRelationships, relationships);
-  return numRelationships;
+  Relationship *outRelationships = contiguizeRelationships(relationships, outLength);
+  return outRelationships;
 }
 
 extern "C" {
@@ -226,32 +235,48 @@ extern "C" {
     initialize(treeInput, length);
   }
 
-  size_t relationships(Person a, Person b, Relationship **relationships) {
-    return getRelationships(a, b, relationships);
+  Relationship* get_relationships(Person a, Person b, size_t *out_length) {
+    return getRelationships(a, b, out_length);
   }
 
   size_t get_relationship_size() {
     return sizeof(Relationship);
   }
 
+  size_t get_parentage_size() {
+    return sizeof(Parentage);
+  }
+
   size_t get_removal_offset() {
     return offsetof(Relationship, removal);
   }
 
-  size_t get_cousinship_offset() {
-    return offsetof(Relationship, cousinship);
+  size_t get_cousinhood_offset() {
+    return offsetof(Relationship, cousinhood);
   }
 
-  size_t get_completeness_offset() {
-    return offsetof(Relationship, completeness);
+  size_t get_parentages_offset() {
+    return offsetof(Relationship, parentages);
   }
 
-  size_t get_parentage_offset() {
-    return offsetof(Relationship, parentage);
+  size_t get_parentage_length_offset() {
+    return offsetof(Relationship, parentage_length);
   }
 
-  size_t get_multiplicity_offset() {
-    return offsetof(Relationship, multiplicity);
+  size_t get_left_father_offset() {
+    return offsetof(Parentage, leftFather);
+  }
+
+  size_t get_left_mother_offset() {
+    return offsetof(Parentage, leftMother);
+  }
+
+  size_t get_right_father_offset() {
+    return offsetof(Parentage, rightFather);
+  }
+
+  size_t get_right_mother_offset() {
+    return offsetof(Parentage, rightMother);
   }
 
 }

@@ -4,15 +4,19 @@ import babel from "@rolldown/plugin-babel"
 import path from "path"
 
 // https://vite.dev/config/
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [react(), babel({ presets: [reactCompilerPreset()] })],
   resolve: {
     alias: {
       "@family-tree": path.resolve(import.meta.dirname, "./src"),
       "@families": path.resolve(import.meta.dirname, "./families"),
+      "@wasm": path.resolve(
+        import.meta.dirname,
+        `./src/wasm/${mode === "production" ? "dist" : "debug"}`,
+      ),
     },
   },
   server: {
     port: 3000,
   },
-})
+}))

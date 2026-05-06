@@ -1,4 +1,5 @@
 src/wasm/dist
+src/wasm/debug
 .vscode
 families
 

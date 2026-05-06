@@ -1,9 +1,7 @@
 import { useEffect, useMemo, useState } from "react"
 import "@family-tree/App.css"
 import jacquard, { interpretJacquard } from "@family-tree/wasm-interop/jacquard"
-import relationships, {
-  relationshipToString,
-} from "@family-tree/wasm-interop/relationships"
+import relationships from "@family-tree/wasm-interop/relationships"
 import {
   Family,
   type FamilyTree,
@@ -49,7 +47,7 @@ function App() {
     }
     return relationships
       .sort((a, b) => Math.abs(a.removal) - Math.abs(b.removal))
-      .sort((a, b) => Math.abs(a.cousinship) - Math.abs(b.cousinship))
+      .sort((a, b) => Math.abs(a.cousinhood) - Math.abs(b.cousinhood))
   }, [getRelationshipsFunction, aId, bId])
 
   useEffect(() => {
@@ -86,6 +84,17 @@ function App() {
     })
   }, [familyTree])
 
+  function compareAll() {
+    if (familyTree === null || getCoefsFunction === null) {
+      return
+    }
+    for (const [aId] of familyTree) {
+      for (const [bId] of familyTree) {
+        getCoefsFunction(aId, bId)
+      }
+    }
+  }
+
   return (
     <>
       <section id="center">
@@ -114,13 +123,14 @@ function App() {
         </div>
         <p className="counter">{JSON.stringify(relationship)}</p>
         <p className="counter">{JSON.stringify(relationshipArray)}</p>
-        <p className="counter">
+        {/* <p className="counter">
           {a === null
             ? ""
             : relationshipArray
-                ?.map((relationship) => relationshipToString(relationship, a))
+                ?.map((relationship) => JSON.stringify(relationship))
                 .join(", ")}
-        </p>
+        </p> */}
+        <button onClick={compareAll}>Foo</button>
       </section>
 
       <div className="ticks"></div>

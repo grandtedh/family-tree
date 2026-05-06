@@ -1,5 +1,5 @@
 import { getGenerations, type FamilyTree } from "@family-tree/trees/family.js"
-import createModule from "@family-tree/wasm/dist/jacquard"
+import createModule from "@wasm/jacquard.js"
 
 const SIZEOF_SHORT = 2
 const SIZEOF_DOUBLE = 8
@@ -41,6 +41,7 @@ export default async function jacquard(
     a: string,
     b: string,
   ): JacquardCoefficients | null {
+    console.log("Heap size:", `${module.HEAPU16.length / (2 * 1024 ** 2)}MB`)
     const aId = idMap.get(a)
     const bId = idMap.get(b)
     if (aId === undefined) {
