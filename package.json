@@ -7,7 +7,10 @@
   "author": "Ted Haroldson",
   "scripts": {
     "test": "vitest",
+    "predev": "npm run wasm:build",
     "dev": "vite",
+    "wasm:build": "make -C src/wasm",
+    "prebuild": "npm run wasm:build",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview"

@@ -87,8 +87,8 @@ export default async function relationships(
           rightMother:
             rightMother in idArray ? idArray[rightMother] : undefined,
         })
-        module._free(parentagesPtr)
       }
+      module._free(parentagesPtr)
 
       relationships.push({
         removal,
