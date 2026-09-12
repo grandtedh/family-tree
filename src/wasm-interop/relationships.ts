@@ -1,10 +1,10 @@
-import { getGenerations, type FamilyTree } from "@family-tree/trees/family.js"
+import { getGenerations, type FamilyTree } from "@family-tree/family/family.js"
 import createModule from "@wasm/relationships.js"
 
-const SIZEOF_CHAR = 1
+// const SIZEOF_CHAR = 1
 const SIZEOF_SHORT = 2
 const SIZEOF_LONG = 4
-const SIZEOF_LONG_LONG = 8
+// const SIZEOF_LONG_LONG = 8
 const SIZEOF_POINTER = 4
 
 export interface Relationship {
@@ -24,9 +24,13 @@ export default async function relationships(
   familyTree: FamilyTree,
 ): Promise<(a: string, b: string) => Relationship[] | null> {
   const { idMap, idArray, numericalFamilyTree } = familyTreeToArray(familyTree)
+  const flattenedFamilyTree: number[] = []
+  for (const person of numericalFamilyTree) {
+    flattenedFamilyTree.push(...person)
+  }
   const module = await createModule()
   const ptr = module._malloc(numericalFamilyTree.length * 2 * SIZEOF_SHORT)
-  module.HEAPU16.set(numericalFamilyTree.flat(1), ptr / SIZEOF_SHORT)
+  module.HEAPU16.set(flattenedFamilyTree, ptr / SIZEOF_SHORT)
   module._init(ptr, numericalFamilyTree.length)
   module._free(ptr)
 
@@ -220,77 +224,78 @@ function familyTreeToArray(familyTree: FamilyTree) {
   }
 }
 
-function ordinal(n: number) {
-  switch (n) {
-    case 0:
-      return "zeroth"
-    case 1:
-      return "first"
-    case 2:
-      return "second"
-    case 3:
-      return "third"
-    case 4:
-      return "fourth"
-    case 5:
-      return "fifth"
-    case 6:
-      return "sixth"
-    case 7:
-      return "seventh"
-    case 8:
-      return "eighth"
-    case 9:
-      return "ninth"
-    case 10:
-      return "tenth"
-    case 11:
-      return "eleventh"
-    case 12:
-      return "twelfth"
-    case 13:
-      return "thirteenth"
-    case 14:
-      return "fourteenth"
-    case 15:
-      return "fifteenth"
-    case 16:
-      return "sixteenth"
-    case 17:
-      return "seventeenth"
-    case 18:
-      return "eighteenth"
-    case 19:
-      return "nineteenth"
-    case 20:
-      return "twentieth"
-    default:
-      const lastDigit = n % 10
-      switch (lastDigit) {
-        case 1:
-          return n + "st"
-        case 2:
-          return n + "nd"
-        case 3:
-          return n + "rd"
-        default:
-          return n + "th"
-      }
-  }
-}
+// function ordinal(n: number) {
+//   switch (n) {
+//     case 0:
+//       return "zeroth"
+//     case 1:
+//       return "first"
+//     case 2:
+//       return "second"
+//     case 3:
+//       return "third"
+//     case 4:
+//       return "fourth"
+//     case 5:
+//       return "fifth"
+//     case 6:
+//       return "sixth"
+//     case 7:
+//       return "seventh"
+//     case 8:
+//       return "eighth"
+//     case 9:
+//       return "ninth"
+//     case 10:
+//       return "tenth"
+//     case 11:
+//       return "eleventh"
+//     case 12:
+//       return "twelfth"
+//     case 13:
+//       return "thirteenth"
+//     case 14:
+//       return "fourteenth"
+//     case 15:
+//       return "fifteenth"
+//     case 16:
+//       return "sixteenth"
+//     case 17:
+//       return "seventeenth"
+//     case 18:
+//       return "eighteenth"
+//     case 19:
+//       return "nineteenth"
+//     case 20:
+//       return "twentieth"
+//     default: {
+//       const lastDigit = n % 10
+//       switch (lastDigit) {
+//         case 1:
+//           return n + "st"
+//         case 2:
+//           return n + "nd"
+//         case 3:
+//           return n + "rd"
+//         default:
+//           return n + "th"
+//       }
+//     }
+//   }
+// }
 
-function multiplicativeAdverb(n: number) {
-  switch (n) {
-    case 1:
-      return "once"
-    case 2:
-      return "twice"
-    case 3:
-      return "thrice"
-    default:
-      return `${n} times`
-  }
-}
+// function multiplicativeAdverb(n: number) {
+//   switch (n) {
+//     case 1:
+//       return "once"
+//     case 2:
+//       return "twice"
+//     case 3:
+//       return "thrice"
+//     default:
+//       return `${n} times`
+//   }
+// }
 
 export function multiplicativeAdjective(n: number) {
   switch (n) {

@@ -1,4 +1,4 @@
-import { getGenerations, type FamilyTree } from "@family-tree/trees/family.js"
+import { getGenerations, type FamilyTree } from "@family-tree/family/family.js"
 import createModule from "@wasm/jacquard.js"
 
 const SIZEOF_SHORT = 2
@@ -27,9 +27,13 @@ export default async function jacquard(
   familyTree: FamilyTree,
 ): Promise<(a: string, b: string) => JacquardCoefficients | null> {
   const { idMap, numericalFamilyTree } = familyTreeToArray(familyTree)
+  const flattenedFamilyTree: number[] = []
+  for (const person of numericalFamilyTree) {
+    flattenedFamilyTree.push(...person)
+  }
   const module = await createModule()
   const ptr = module._malloc(numericalFamilyTree.length * 2 * SIZEOF_SHORT)
-  module.HEAPU16.set(numericalFamilyTree.flat(1), ptr / SIZEOF_SHORT)
+  module.HEAPU16.set(flattenedFamilyTree, ptr / SIZEOF_SHORT)
   const initSuccess = module._init(ptr, numericalFamilyTree.length)
   module._free(ptr)
 
