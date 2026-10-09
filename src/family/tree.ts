@@ -3,222 +3,599 @@ import {
   type StoredConception,
   type StoredBirth,
   StorageId,
-} from "./stored"
-import { Person, type ReadonlyPerson } from "./person"
-import { Birth } from "./birth"
-import { Conception } from "./conception"
+  StoredTree,
+} from "@family-tree/family/stored"
+import { type Person, type ReadonlyPerson } from "@family-tree/family/person"
+import { type Birth } from "@family-tree/family/birth"
+import { type Conception } from "@family-tree/family/conception"
 import {
+  checkAllowedErrors as checkExpectedErrors,
+  FamilyTreeCyclicAncestryError,
   FamilyTreeDuplicateIdError,
+  FamilyTreeDuplicateStoredIdError,
+  FamilyTreeError,
+  FamilyTreeParentGenderError,
+  FamilyTreeSelfingError,
   FamilyTreeUnrecognizedIdError,
   FamilyTreeUnrecognizedStoredIdError,
-} from "./errors"
-import type { ImageUrl } from "./image"
+  type Constructor,
+} from "@family-tree/family/errors"
+import type { FamilyTreeOptions } from "@family-tree/family/options"
+import type { FamilyTreeResult } from "@family-tree/family/result"
 
 export class FamilyTree {
-  #people: Map<StorageId, Person>
-  get people(): ReadonlyMap<StorageId, ReadonlyPerson> {
+  #people: Map<number, Person>
+  readonly options: Readonly<FamilyTreeOptions>
+
+  get people(): ReadonlyMap<number, ReadonlyPerson> {
     return this.#people
   }
 
-  constructor(tree: FamilyTree)
-  constructor(
-    people: StoredPerson[],
-    conceptions: StoredConception[],
-    births: StoredBirth[],
-  )
-  constructor(
-    ...args:
-      | [tree: FamilyTree]
-      | [
-          people: StoredPerson[],
-          conceptions: StoredConception[],
-          births: StoredBirth[],
-        ]
+  private constructor(
+    people: Map<number, Person>,
+    options: Readonly<FamilyTreeOptions>,
   ) {
-    this.#people = new Map()
-    if (args.length === 1) {
-      // Copy constructor
-      const [tree] = args
-      this.#copyConstructor(tree)
-    } else {
-      const [people, conceptions, births] = args
-      this.#storedConstructor(people, conceptions, births)
+    this.#people = people
+    this.options = options
+  }
+
+  static make<T extends Constructor<FamilyTreeError>>(
+    people: readonly Person[],
+    options: Readonly<FamilyTreeOptions>,
+    expectedErrors: T[],
+  ): FamilyTreeResult<InstanceType<T>> {
+    const errors = this.checkValidity(people, options)
+    checkExpectedErrors(errors, expectedErrors)
+    if (errors[0]) {
+      return {
+        success: false,
+        errors,
+      }
+    }
+    return {
+      success: true,
+      tree: new FamilyTree(
+        new Map(people.map((person) => [person.id, person])),
+        options,
+      ),
     }
   }
 
-  addPerson(person: {
-    id: StorageId
-    name?: string | undefined
-    generation?: number | undefined
-    gender: "m" | "f"
-    isHidden?: boolean
-    image?: ImageUrl | undefined
-  }) {
-    const newTree = new FamilyTree(this)
-    if (newTree.#people.has(person.id)) {
-      throw new FamilyTreeDuplicateIdError("person", person.id)
+  static checkValidity(
+    people: readonly Person[],
+    options: Readonly<FamilyTreeOptions>,
+  ): FamilyTreeError[] {
+    const peopleMap = new Map<number, Person>()
+    const storedIds = new Set<StorageId>()
+    const errors: FamilyTreeError[] = []
+    for (const person of people) {
+      if (peopleMap.has(person.id)) {
+        errors.push(new FamilyTreeDuplicateIdError(person.id))
+      } else {
+        peopleMap.set(person.id, person)
+      }
     }
-    newTree.#people.set(person.id, new Person(person))
-    return newTree
+    for (const person of peopleMap.values()) {
+      if (storedIds.has(person.storedId)) {
+        errors.push(
+          new FamilyTreeDuplicateStoredIdError("person", person.storedId),
+        )
+      } else {
+        storedIds.add(person.storedId)
+      }
+
+      if (person.conception && typeof person.conception.father === "object") {
+        // Has a non-anonymous father
+        const father = person.conception.father
+        if (!peopleMap.has(father.id) || peopleMap.get(father.id) !== father) {
+          errors.push(new FamilyTreeUnrecognizedIdError(father.id))
+        }
+        if (options.enforceParentGender && father.gender !== "m") {
+          errors.push(new FamilyTreeParentGenderError(father, "father"))
+        }
+        if (
+          options.preventSelfing &&
+          father === person.conception.birth.mother
+        ) {
+          errors.push(new FamilyTreeSelfingError(father, person))
+        }
+      }
+
+      if (
+        person.conception &&
+        typeof person.conception.birth.mother === "object"
+      ) {
+        // Has a non-anonymous mother
+        const mother = person.conception.birth.mother
+        if (!peopleMap.has(mother.id) || peopleMap.get(mother.id) !== mother) {
+          errors.push(new FamilyTreeUnrecognizedIdError(mother.id))
+        }
+        if (mother.gender !== "f") {
+          errors.push(new FamilyTreeParentGenderError(mother, "mother"))
+        }
+      }
+    }
+
+    // TODO: Check cyclic ancestry
+    return errors
   }
 
-  setFather(personId: StorageId, fatherId: StorageId | null) {
-    const newTree = new FamilyTree(this)
-    const person = newTree.#people.get(personId)
+  static fromStored(
+    {
+      people: storedPeople,
+      conceptions: storedConceptions,
+      births: storedBirths,
+    }: StoredTree,
+    options: Readonly<FamilyTreeOptions>,
+  ): FamilyTreeResult<FamilyTreeError> {
+    // Maps stored ID to [person, conceptionId] tuple
+    const peopleMap = new Map<StorageId, [Person, StorageId | null]>()
+    const conceptionsMap = new Map<StorageId, Conception>()
+    const birthsMap = new Map<StorageId, Birth>()
+    const people: Person[] = []
+    const errors: FamilyTreeError[] = []
+    let nextId = 0
+    for (const person of storedPeople) {
+      if (peopleMap.has(person.id)) {
+        errors.push(new FamilyTreeDuplicateStoredIdError("person", person.id))
+        continue
+      }
+      peopleMap.set(person.id, [
+        {
+          id: nextId++,
+          storedId: person.id,
+          gender: person.gender,
+          name: person.name ?? null,
+          // Conception must start off as null
+          // Will be initialized later, after we've processed the conceptions
+          conception: null,
+          generation: person.generation ?? null,
+          image: person.image ?? null,
+          isHidden: !!person.isHidden,
+        },
+        person.conception ?? null,
+      ])
+    }
+    for (const birth of storedBirths) {
+      if (birthsMap.has(birth.id)) {
+        errors.push(new FamilyTreeDuplicateStoredIdError("birth", birth.id))
+        continue
+      }
+      let mother
+      if (birth.mother === null) {
+        mother = Symbol()
+      } else {
+        mother = peopleMap.get(birth.mother)?.[0]
+        if (mother === undefined) {
+          errors.push(
+            new FamilyTreeUnrecognizedStoredIdError(
+              "birth",
+              birth.id,
+              "person",
+              birth.mother,
+            ),
+          )
+          continue
+        }
+      }
+      birthsMap.set(birth.id, { mother })
+    }
+    for (const conception of storedConceptions) {
+      if (conceptionsMap.has(conception.id)) {
+        errors.push(
+          new FamilyTreeDuplicateStoredIdError("conception", conception.id),
+        )
+        continue
+      }
+      let father
+      if (conception.father === null) {
+        father = Symbol()
+      } else {
+        father = peopleMap.get(conception.father)?.[0]
+        if (father === undefined) {
+          errors.push(
+            new FamilyTreeUnrecognizedStoredIdError(
+              "conception",
+              conception.id,
+              "person",
+              conception.father,
+            ),
+          )
+          continue
+        }
+      }
+      const birth = birthsMap.get(conception.birth)
+      if (birth === undefined) {
+        errors.push(
+          new FamilyTreeUnrecognizedStoredIdError(
+            "conception",
+            conception.id,
+            "birth",
+            conception.birth,
+          ),
+        )
+        continue
+      }
+      conceptionsMap.set(conception.id, { father, birth })
+    }
+    for (const [personId, [person, conceptionId]] of peopleMap) {
+      people.push(person)
+      if (conceptionId === null) {
+        continue
+      }
+      const conception = conceptionsMap.get(conceptionId)
+      if (conception === undefined) {
+        errors.push(
+          new FamilyTreeUnrecognizedStoredIdError(
+            "person",
+            personId,
+            "conception",
+            conceptionId,
+          ),
+        )
+        continue
+      }
+      person.conception = conception
+    }
+    const result = this.make(people, options, [
+      FamilyTreeParentGenderError,
+      FamilyTreeCyclicAncestryError,
+      FamilyTreeSelfingError,
+    ])
+    if (!result.success || errors.length) {
+      const resultErrors = result.success ? [] : result.errors
+      return {
+        success: false,
+        errors: [...errors, ...resultErrors],
+      }
+    }
+    return result
+  }
+
+  copy(): Map<number, Person> {
+    // Maps referentially old conception to corresponding new conception
+    const conceptionsMap = new Map<Conception, Conception>()
+    // Maps referentially old birth to corresponding new birth
+    const birthsMap = new Map<Birth, Birth>()
+    const people = new Map<number, Person>()
+    for (const person of this.#people.values()) {
+      people.set(person.id, {
+        // person.conception is still referentially old Conception
+        ...person,
+      })
+    }
+    for (const person of people.values()) {
+      if (person.conception === null) {
+        continue
+      }
+      let conception = conceptionsMap.get(person.conception)
+      if (conception === undefined) {
+        let birth = birthsMap.get(person.conception.birth)
+        if (birth === undefined) {
+          // Referentially old mother
+          const mother = person.conception.birth.mother
+          let newMother
+          if (typeof mother === "symbol") {
+            newMother = mother
+          } else {
+            newMother = people.get(mother.id)
+            if (newMother === undefined) {
+              // Constraint violation, should be impossible
+              throw new FamilyTreeUnrecognizedIdError(mother.id)
+            }
+          }
+          birth = { mother: newMother }
+          birthsMap.set(person.conception.birth, birth)
+        }
+        const father = person.conception.father
+        let newFather
+        if (typeof father === "symbol") {
+          newFather = father
+        } else {
+          newFather = people.get(father.id)
+          if (newFather === undefined) {
+            // Likewise
+            throw new FamilyTreeUnrecognizedIdError(father.id)
+          }
+        }
+        conception = { father: newFather, birth }
+        conceptionsMap.set(person.conception, conception)
+      }
+      person.conception = conception
+    }
+    return people
+  }
+
+  addPerson(
+    storedId: StorageId,
+  ): FamilyTreeResult<FamilyTreeDuplicateStoredIdError> {
+    const newTree = this.copy()
+    const nextId = newTree.size ? Math.max(...newTree.keys()) + 1 : 0
+    newTree.set(nextId, {
+      id: nextId,
+      storedId,
+      gender: "m",
+      name: null,
+      conception: null,
+      generation: null,
+      image: null,
+      isHidden: false,
+    })
+    return FamilyTree.make([...newTree.values()], this.options, [
+      FamilyTreeDuplicateStoredIdError,
+    ])
+  }
+
+  setFather(
+    personId: number,
+    fatherId: number | null,
+  ): FamilyTreeResult<
+    | FamilyTreeUnrecognizedIdError
+    | FamilyTreeParentGenderError
+    | FamilyTreeCyclicAncestryError
+    | FamilyTreeSelfingError
+  > {
+    const newTree = this.copy()
+    const person = newTree.get(personId)
     if (person === undefined) {
-      throw new FamilyTreeUnrecognizedIdError(personId)
+      return {
+        success: false,
+        errors: [new FamilyTreeUnrecognizedIdError(personId)],
+      }
     }
     let father
     if (fatherId === null) {
       father = Symbol()
     } else {
-      father = newTree.#people.get(fatherId)
+      father = newTree.get(fatherId)
       if (father === undefined) {
-        throw new FamilyTreeUnrecognizedIdError(fatherId)
+        return {
+          success: false,
+          errors: [new FamilyTreeUnrecognizedIdError(fatherId)],
+        }
       }
     }
-    if (person.conception === undefined) {
-      const birth = new Birth({ mother: Symbol() })
-      person.conception = new Conception({ father, birth })
+    if (person.conception === null) {
+      person.conception = { father, birth: { mother: Symbol() } }
     } else {
       person.conception.father = father
     }
-    return newTree
+    return FamilyTree.make([...newTree.values()], this.options, [
+      FamilyTreeParentGenderError,
+      FamilyTreeCyclicAncestryError,
+      FamilyTreeSelfingError,
+    ])
   }
 
-  setMother(personId: StorageId, motherId: StorageId | null) {
-    const newTree = new FamilyTree(this)
-    const person = newTree.#people.get(personId)
+  setMother(
+    personId: number,
+    motherId: number | null,
+  ): FamilyTreeResult<
+    | FamilyTreeUnrecognizedIdError
+    | FamilyTreeParentGenderError
+    | FamilyTreeCyclicAncestryError
+    | FamilyTreeSelfingError
+  > {
+    const newTree = this.copy()
+    const person = newTree.get(personId)
     if (person === undefined) {
-      throw new FamilyTreeUnrecognizedIdError(personId)
+      return {
+        success: false,
+        errors: [new FamilyTreeUnrecognizedIdError(personId)],
+      }
     }
     let mother
     if (motherId === null) {
       mother = Symbol()
     } else {
-      mother = newTree.#people.get(motherId)
+      mother = newTree.get(motherId)
       if (mother === undefined) {
-        throw new FamilyTreeUnrecognizedIdError(motherId)
+        return {
+          success: false,
+          errors: [new FamilyTreeUnrecognizedIdError(motherId)],
+        }
       }
     }
-    if (person.conception === undefined) {
-      const birth = new Birth({ mother })
-      person.conception = new Conception({
+    if (person.conception === null) {
+      const birth = { mother }
+      person.conception = {
         father: Symbol(),
         birth,
-      })
+      }
     } else {
       person.conception.birth.mother = mother
     }
-    return newTree
+    return FamilyTree.make([...newTree.values()], this.options, [
+      FamilyTreeParentGenderError,
+      FamilyTreeCyclicAncestryError,
+      FamilyTreeSelfingError,
+    ])
   }
 
-  makeFounder(personId: StorageId) {
-    const newTree = new FamilyTree(this)
-    const person = newTree.#people.get(personId)
+  makeFounder(
+    personId: number,
+  ): FamilyTreeResult<FamilyTreeUnrecognizedIdError> {
+    const newTree = this.copy()
+    const person = newTree.get(personId)
     if (person === undefined) {
-      throw new FamilyTreeUnrecognizedIdError(personId)
+      return {
+        success: false,
+        errors: [new FamilyTreeUnrecognizedIdError(personId)],
+      }
     }
-    person.conception = undefined
-    return newTree
+    person.conception = null
+    return FamilyTree.make([...newTree.values()], this.options, [])
   }
 
   makeTwin(
-    personId: StorageId,
-    twinId: StorageId | null,
+    personId: number,
+    twinId: number,
     type: "identical" | "fraternal",
-  ) {
-    const newTree = new FamilyTree(this)
-    const person = newTree.#people.get(personId)
+    parentsToChange: "ours" | "theirs",
+  ): FamilyTreeResult<
+    | FamilyTreeUnrecognizedIdError
+    | FamilyTreeParentGenderError
+    | FamilyTreeCyclicAncestryError
+    | FamilyTreeSelfingError
+  > {
+    const newTree = this.copy()
+    const person = newTree.get(personId)
     if (person === undefined) {
-      throw new FamilyTreeUnrecognizedIdError(personId)
-    }
-    const father = person.conception?.father ?? Symbol()
-    const mother = person.conception?.birth?.mother ?? Symbol()
-    if (twinId === null) {
-      let birth
-      if (type === "identical") {
-        birth = person.conception?.birth ?? new Birth({ mother })
-      } else {
-        birth = new Birth({ mother })
+      return {
+        success: false,
+        errors: [new FamilyTreeUnrecognizedIdError(personId)],
       }
-      person.conception = new Conception({ father, birth })
-      return newTree
     }
-    const twin = newTree.#people.get(twinId)
+    const twin = newTree.get(twinId)
     if (twin === undefined) {
-      throw new FamilyTreeUnrecognizedIdError(twinId)
+      return {
+        success: false,
+        errors: [new FamilyTreeUnrecognizedIdError(twinId)],
+      }
     }
-    if (twin.conception === undefined) {
-      const birth = new Birth({ mother: mother ?? Symbol() })
-      twin.conception = new Conception({
-        father: father ?? Symbol(),
-        birth,
-      })
+    const [from, to] =
+      parentsToChange === "ours" ? [twin, person] : [person, twin]
+    if (from.conception === null) {
+      from.conception = { father: Symbol(), birth: { mother: Symbol() } }
     }
     if (type === "identical") {
-      person.conception = twin.conception
+      to.conception = from.conception
     } else {
-      person.conception = new Conception({
-        father,
-        birth: twin.conception.birth,
-      })
+      if (to.conception === null) {
+        to.conception = { father: Symbol(), birth: { mother: Symbol() } }
+      }
+      to.conception.birth = from.conception.birth
     }
-    return newTree
+    return FamilyTree.make([...newTree.values()], this.options, [
+      FamilyTreeParentGenderError,
+      FamilyTreeCyclicAncestryError,
+      FamilyTreeSelfingError,
+    ])
   }
 
-  deletePerson(personId: StorageId) {
-    const newTree = new FamilyTree(this)
-    const isDeleteSuccessful = newTree.#people.delete(personId)
-    if (!isDeleteSuccessful) {
-      throw new FamilyTreeUnrecognizedIdError(personId)
-    }
-    return newTree
-  }
-
-  editPerson(
-    personId: StorageId,
-    properties: {
-      name?: string | undefined
-      generation?: number | undefined
-      gender: "m" | "f"
-      isHidden?: boolean | undefined
-      image?: ImageUrl | undefined
-    },
-  ) {
-    const newTree = new FamilyTree(this)
-    const person = newTree.#people.get(personId)
+  clearTwins(
+    personId: number,
+    type: "fraternal" | "all",
+  ): FamilyTreeResult<FamilyTreeUnrecognizedIdError> {
+    const newTree = this.copy()
+    const person = newTree.get(personId)
     if (person === undefined) {
-      throw new FamilyTreeUnrecognizedIdError(personId)
+      return {
+        success: false,
+        errors: [new FamilyTreeUnrecognizedIdError(personId)],
+      }
     }
-    person.name = properties.name
-    person.generation = properties.generation
-    person.gender = properties.gender
-    person.isHidden = !!properties.isHidden
-    person.image = properties.image
-    return newTree
+    if (person.conception !== null) {
+      if (type === "all") {
+        person.conception = {
+          father: person.conception.father,
+          birth: { mother: person.conception.birth.mother },
+        }
+      } else {
+        person.conception.birth = { mother: person.conception.birth.mother }
+      }
+    }
+    return FamilyTree.make([...newTree.values()], this.options, [])
   }
 
-  setPersonId(personId: StorageId, newPersonId: StorageId) {
-    const newTree = new FamilyTree(this)
-    const person = newTree.#people.get(personId)
+  deletePerson(
+    personId: number,
+  ): FamilyTreeResult<FamilyTreeUnrecognizedIdError> {
+    const newTree = this.copy()
+    const person = newTree.get(personId)
     if (person === undefined) {
-      throw new FamilyTreeUnrecognizedIdError(personId)
+      return {
+        success: false,
+        errors: [new FamilyTreeUnrecognizedIdError(personId)],
+      }
     }
-    if (newTree.#people.has(newPersonId)) {
-      throw new FamilyTreeDuplicateIdError("person", newPersonId)
+    newTree.delete(personId)
+    for (const other of newTree.values()) {
+      if (other.conception?.father === person) {
+        other.conception.father = Symbol()
+      }
+      if (other.conception?.birth?.mother === person) {
+        other.conception.birth.mother = Symbol()
+      }
     }
-    person.id = newPersonId
-    newTree.#people.delete(personId)
-    newTree.#people.set(newPersonId, person)
-    return newTree
+    return FamilyTree.make([...newTree.values()], this.options, [])
   }
 
-  serialize(): {
-    people: StoredPerson[]
-    conceptions: StoredConception[]
-    births: StoredBirth[]
-  } {
+  setStoredId(
+    personId: number,
+    newStoredId: StorageId,
+  ): FamilyTreeResult<
+    FamilyTreeUnrecognizedIdError | FamilyTreeDuplicateStoredIdError
+  > {
+    const newTree = this.copy()
+    const person = newTree.get(personId)
+    if (person === undefined) {
+      return {
+        success: false,
+        errors: [new FamilyTreeUnrecognizedIdError(personId)],
+      }
+    }
+    person.storedId = newStoredId
+    return FamilyTree.make([...newTree.values()], this.options, [
+      FamilyTreeDuplicateStoredIdError,
+    ])
+  }
+
+  setGender(
+    personId: number,
+    gender: "m" | "f",
+  ): FamilyTreeResult<
+    FamilyTreeUnrecognizedIdError | FamilyTreeParentGenderError
+  > {
+    const newTree = this.copy()
+    const person = newTree.get(personId)
+    if (person === undefined) {
+      return {
+        success: false,
+        errors: [new FamilyTreeUnrecognizedIdError(personId)],
+      }
+    }
+    person.gender = gender
+    for (const other of newTree.values()) {
+      if (
+        other.conception?.father === person &&
+        gender === "f" &&
+        this.options.enforceParentGender
+      ) {
+        other.conception.father = Symbol()
+      }
+      if (other.conception?.birth?.mother === person && gender === "m") {
+        other.conception.birth.mother = Symbol()
+      }
+    }
+    return FamilyTree.make([...newTree.values()], this.options, [
+      FamilyTreeParentGenderError,
+    ])
+  }
+
+  setAttribute<
+    K extends Exclude<
+      keyof Person,
+      "id" | "storedId" | "gender" | "conception"
+    >,
+  >(
+    personId: number,
+    key: K,
+    value: Person[K],
+  ): FamilyTreeResult<FamilyTreeUnrecognizedIdError> {
+    const newTree = this.copy()
+    const person = newTree.get(personId)
+    if (person === undefined) {
+      return {
+        success: false,
+        errors: [new FamilyTreeUnrecognizedIdError(personId)],
+      }
+    }
+    person[key] = value
+    return FamilyTree.make([...newTree.values()], this.options, [])
+  }
+
+  serialize(): StoredTree {
     const birthIds = new Map<Birth, string>()
     const conceptionIds = new Map<Conception, string>()
 
@@ -230,12 +607,9 @@ export class FamilyTree {
     const storedBirths: StoredBirth[] = []
 
     for (const person of this.#people.values()) {
-      if (typeof person.id === "symbol") {
-        continue
-      }
       const conception = person.conception
       let conceptionId
-      if (conception === undefined) {
+      if (conception === null) {
         conceptionId = undefined
       } else {
         let birthId = birthIds.get(conception.birth)
@@ -245,7 +619,7 @@ export class FamilyTree {
           const motherId =
             typeof conception.birth.mother === "symbol"
               ? null
-              : conception.birth.mother.id
+              : conception.birth.mother.storedId
           storedBirths.push({
             id: birthId,
             mother: motherId,
@@ -256,7 +630,9 @@ export class FamilyTree {
           conceptionId = `conception-${nextConceptionId++}`
           conceptionIds.set(conception, conceptionId)
           const fatherId =
-            typeof conception.father === "symbol" ? null : conception.father.id
+            typeof conception.father === "symbol"
+              ? null
+              : conception.father.storedId
           storedConceptions.push({
             id: conceptionId,
             birth: birthId,
@@ -264,23 +640,14 @@ export class FamilyTree {
           })
         }
       }
-      let origin
-      if (conceptionId === undefined) {
-        origin = {
-          generation: person.generation,
-        }
-      } else {
-        origin = {
-          conception: conceptionId,
-        }
-      }
       storedPeople.push({
-        ...origin,
-        id: person.id,
+        id: person.storedId,
         gender: person.gender,
         name: person.name,
-        isHidden: person.isHidden,
+        conception: conceptionId,
+        generation: person.generation,
         image: person.image,
+        isHidden: person.isHidden || undefined,
       })
     }
 
@@ -288,158 +655,6 @@ export class FamilyTree {
       people: storedPeople,
       conceptions: storedConceptions,
       births: storedBirths,
-    }
-  }
-
-  #copyConstructor(tree: FamilyTree) {
-    const conceptionsMap = new Map<Conception, Conception>()
-    const birthsMap = new Map<Birth, Birth>()
-    for (const [id, person] of tree.#people) {
-      this.#people.set(
-        id,
-        new Person({
-          id,
-          name: person.name,
-          gender: person.gender,
-          // person.conception is currently old Conception
-          conception: person.conception,
-          generation: person.generation,
-          image: person.image,
-        }),
-      )
-    }
-    for (const person of this.#people.values()) {
-      if (person.conception !== undefined) {
-        let conception = conceptionsMap.get(person.conception)
-        if (conception === undefined) {
-          let birth = birthsMap.get(person.conception.birth)
-          if (birth === undefined) {
-            const mother = person.conception.birth.mother
-            let newMother
-            if (typeof mother === "symbol") {
-              newMother = mother
-            } else {
-              newMother = this.#people.get(mother.id)
-              if (newMother === undefined) {
-                // Shouldn't be possible, since we initialized every person in the tree already
-                throw new Error("Couldn't find mother in person map.")
-              }
-            }
-            birth = new Birth({ mother: newMother })
-            birthsMap.set(person.conception.birth, birth)
-          }
-          const father = person.conception.father
-          let newFather
-          if (typeof father === "symbol") {
-            newFather = father
-          } else {
-            newFather = this.#people.get(father.id)
-            // Likewise
-            if (newFather === undefined) {
-              throw new Error("Couldn't find father in person map.")
-            }
-          }
-          conception = new Conception({ father: newFather, birth })
-          conceptionsMap.set(person.conception, conception)
-        }
-        person.conception = conception
-      }
-    }
-  }
-
-  #storedConstructor(
-    people: StoredPerson[],
-    conceptions: StoredConception[],
-    births: StoredBirth[],
-  ) {
-    const peopleMap = new Map<StorageId, [Person, StorageId | undefined]>()
-    const conceptionsMap = new Map<StorageId, Conception>()
-    const birthsMap = new Map<StorageId, Birth>()
-    for (const person of people) {
-      if (peopleMap.has(person.id)) {
-        throw new FamilyTreeDuplicateIdError("person", person.id)
-      }
-      peopleMap.set(person.id, [
-        new Person({
-          id: person.id,
-          name: person.name ?? undefined,
-          gender: person.gender,
-          generation: person.generation ?? undefined,
-          isHidden: !!person.isHidden,
-          image: person.image ?? undefined,
-        }),
-        person.conception ?? undefined,
-      ])
-    }
-    for (const birth of births) {
-      if (birthsMap.has(birth.id)) {
-        throw new FamilyTreeDuplicateIdError("birth", birth.id)
-      }
-      let mother
-      if (birth.mother === null) {
-        mother = Symbol()
-      } else {
-        const motherAndConception = peopleMap.get(birth.mother)
-        if (motherAndConception === undefined) {
-          throw new FamilyTreeUnrecognizedStoredIdError(
-            "birth",
-            birth.id,
-            "person",
-            birth.mother,
-          )
-        }
-        mother = motherAndConception[0]
-      }
-      birthsMap.set(birth.id, new Birth({ mother }))
-    }
-    for (const conception of conceptions) {
-      if (conceptionsMap.has(conception.id)) {
-        throw new FamilyTreeDuplicateIdError("conception", conception.id)
-      }
-      let father
-      if (conception.father === null) {
-        father = Symbol()
-      } else {
-        const fatherAndConception = peopleMap.get(conception.father)
-        if (fatherAndConception === undefined) {
-          throw new FamilyTreeUnrecognizedStoredIdError(
-            "conception",
-            conception.id,
-            "person",
-            conception.father,
-          )
-        }
-        father = fatherAndConception[0]
-      }
-      const birth = birthsMap.get(conception.birth)
-      if (birth === undefined) {
-        throw new FamilyTreeUnrecognizedStoredIdError(
-          "conception",
-          conception.id,
-          "birth",
-          conception.birth,
-        )
-      }
-      conceptionsMap.set(
-        conception.id,
-        new Conception({ father: father, birth }),
-      )
-    }
-    for (const [personId, [person, conceptionId]] of peopleMap) {
-      this.#people.set(personId, person)
-      if (conceptionId === undefined) {
-        continue
-      }
-      const conception = conceptionsMap.get(conceptionId)
-      if (conception === undefined) {
-        throw new FamilyTreeUnrecognizedStoredIdError(
-          "person",
-          personId,
-          "conception",
-          conceptionId,
-        )
-      }
-      person.conception = conception
     }
   }
 }

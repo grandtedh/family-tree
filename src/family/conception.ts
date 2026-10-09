@@ -1,17 +1,12 @@
-import type { Person, ReadonlyPerson } from "./person"
-import type { Birth, ReadonlyBirth } from "./birth"
+import type { Person, ReadonlyPerson } from "@family-tree/family/person"
+import type { Birth, ReadonlyBirth } from "@family-tree/family/birth"
 
-export interface ReadonlyConception {
-  readonly father: ReadonlyPerson | symbol
-  readonly birth: ReadonlyBirth
-}
-
-export class Conception {
+export interface Conception {
   father: Person | symbol
   birth: Birth
+}
 
-  constructor({ father, birth }: { father: Person | symbol; birth: Birth }) {
-    this.father = father
-    this.birth = birth
-  }
+export type ReadonlyConception = {
+  readonly father: ReadonlyPerson | symbol
+  readonly birth: ReadonlyBirth
 }

@@ -1,13 +1,9 @@
-import type { Person, ReadonlyPerson } from "./person"
+import type { Person, ReadonlyPerson } from "@family-tree/family/person"
 
-export interface ReadonlyBirth {
-  readonly mother: ReadonlyPerson | symbol
+export interface Birth {
+  mother: Person | symbol
 }
 
-export class Birth {
-  mother: Person | symbol
-
-  constructor({ mother }: { mother: Person | symbol }) {
-    this.mother = mother
-  }
+export type ReadonlyBirth = {
+  readonly mother: ReadonlyPerson | symbol
 }

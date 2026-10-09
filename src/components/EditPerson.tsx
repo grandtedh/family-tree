@@ -3,6 +3,10 @@ import type {
   ReadonlyPerson,
 } from "@family-tree/family/person"
 import type { StorageId } from "@family-tree/family/stored"
+import { InputAdornment, TextField } from "@mui/material"
+import EditIcon from "@mui/icons-material/Edit"
+import { z } from "zod"
+import { DraftTextInput } from "@family-tree/components/inputs/DraftTextInput"
 
 interface EditPersonProps {
   person: ReadonlyPerson
@@ -32,6 +36,15 @@ export default function EditPerson({
       <h2>Edit person</h2>
 
       <h3>ID</h3>
+
+      <DraftTextInput
+        label={"ID"}
+        value={String(person.id)}
+        onSave={(value) => {
+          setPersonId(value)
+          return { success: true }
+        }}
+      />
 
       <form
         id="edit-person-id"
@@ -140,12 +153,12 @@ export default function EditPerson({
           Is Founder?:{" "}
           <input
             type="checkbox"
-            checked={person.conception !== undefined}
+            checked={person.conception === undefined}
             onChange={(e) => {
               if (e.currentTarget.checked) {
-                setFather(null)
-              } else {
                 makeFounder()
+              } else {
+                setFather(null)
               }
             }}
           />

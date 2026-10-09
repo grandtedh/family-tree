@@ -1,20 +1,32 @@
-import { useEffect, useState } from "react"
-import { FamilyTree } from "@family-tree/family/tree"
-import { type StorageId } from "@family-tree/family/stored"
 import EditPerson from "@family-tree/components/EditPerson"
+import { DraftIntegerInput } from "@family-tree/components/inputs/DraftIntegerInput"
+import { DraftTextInput } from "@family-tree/components/inputs/DraftTextInput"
+import { TextInput } from "@family-tree/components/inputs/TextInput"
+import { PersonSelect } from "@family-tree/components/selects/PersonSelect"
 import type { PersonAttributes } from "@family-tree/family/person"
+import { type StorageId } from "@family-tree/family/stored"
+import { FamilyTree } from "@family-tree/family/tree"
+import { useEffect, useState } from "react"
+
+const encoder = new TextEncoder()
 
 function App() {
   const [tree, setTree] = useState(
     new FamilyTree([{ id: "A", gender: "m" }], [], []),
   )
+  const [serializedURL, setSerializedURL] = useState<string>()
+  const serialized = tree.serialize()
   const [selectedId, setSelectedId] = useState<StorageId>()
 
   const selectedPerson =
     selectedId === undefined ? undefined : tree.people.get(selectedId)
 
   useEffect(() => {
-    const serialized = tree.serialize()
+    const objectURL = URL.createObjectURL(
+      new Blob([encoder.encode(JSON.stringify(serialized))]),
+    )
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setSerializedURL(objectURL)
     console.log(
       "People:",
       JSON.stringify(serialized.people, undefined, 2),
@@ -23,7 +35,8 @@ function App() {
       "Births:",
       JSON.stringify(serialized.births, undefined, 2),
     )
-  }, [tree])
+    return () => URL.revokeObjectURL(objectURL)
+  }, [serialized])
 
   function addPerson() {
     let id = 1
@@ -80,6 +93,10 @@ function App() {
     setTree(tree.makeTwin(selectedId, twinId, type))
   }
 
+  const [selectedMotherId, setSelectedMotherId] = useState<
+    string | number | undefined
+  >(undefined)
+
   return (
     <>
       <h1>Family Tree</h1>
@@ -103,6 +120,10 @@ function App() {
         </label>
       </p>
 
+      <a href={serializedURL} download={"tree.json"}>
+        Download
+      </a>
+
       {selectedPerson !== undefined && (
         <EditPerson
           person={selectedPerson}
@@ -116,6 +137,16 @@ function App() {
           deletePerson={deletePerson}
         />
       )}
+
+      <PersonSelect
+        selectedPerson={
+          selectedMotherId === undefined
+            ? null
+            : (tree.people.get(selectedMotherId) ?? null)
+        }
+        selectPerson={(person) => setSelectedMotherId(person?.id)}
+        options={[...tree.people.values()]}
+      />
     </>
   )
 }
